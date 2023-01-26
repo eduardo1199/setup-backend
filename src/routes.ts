@@ -73,4 +73,81 @@ export async function appRoutes(app: FastifyInstance) {
       completedHabits
     }
   });
+
+  app.patch('/habits/:id/toggle', async (request, response) => {
+    const toggleHabitsParams = z.object({
+      id: z.string().uuid()
+    });
+
+    const { id } = toggleHabitsParams.parse(request.params);
+
+    const today = dayjs().startOf('day').toDate();
+
+    // procurar um dia onde a data é igual de hoje 
+    let day = await prisma.day.findUnique({
+      where: {
+        date: today
+      }
+    });
+
+    if(!day) { // se o dia não existir, crie esse dia no banco de dados
+      day = await prisma.day.create({
+        data: {
+          date: today
+        }
+      })
+    }
+
+    const dayHabit = await prisma.dayHabit.findUnique({ // buscar o hábito para aquele dia
+      where: {
+        day_id_habit_id: {
+          day_id: day.id,
+          habit_id: id
+        }
+      }
+    });
+
+    if(dayHabit) {
+      await prisma.dayHabit.delete({ // deletar o hábito para esse dia
+        where: {
+          id: dayHabit.id
+        }
+      })
+    } else {
+      await prisma.dayHabit.create({ // Completar um hábito para esse dia como paramêtro  
+        data: {
+          day_id: day.id,
+          habit_id: id
+        }
+      });
+    }
+
+  });
+
+  app.get('/summary', async (request, response) => {
+    const summary = await prisma.$queryRaw`
+      SELECT 
+        D.id, 
+        D.date,
+        (
+          SELECT 
+            cast(count(*) as float)
+          FROM day_habits DH
+          WHERE DH.day_id = D.id
+        ) as completed,
+        (
+          SELECT 
+            cast(count(*) as float)
+          FROM habit_week_days HWD
+          JOIN habits H
+            ON H.id = HWD.habit_id
+          WHERE 
+            HWD.week_day = cast(strftime('%w',D.date/1000.0,'unixepoch') as int)
+            AND H.created_at <= D.date
+        ) as amount
+      FROM days D
+    `
+
+    return summary;
+  });
 }
